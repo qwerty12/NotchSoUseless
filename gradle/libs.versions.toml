@@ -1,0 +1,10 @@
+[versions]
+agp = "8.13.0"
+hiddenapibypass = "6.1"
+
+[libraries]
+hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+

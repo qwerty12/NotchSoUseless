@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Notch So Useless</string>
+
+    <string name="accessibility_service_description">
+        Notch So Useless creates an invisible button over your camera cutout area. An accessibility service is required for this.\n\n
+        Available actions:\n
+        • Single tap: Show volume control panel\n
+        • Double tap: Turn screen off\n
+        • Long press: Toggle torch\n\n
+        The camera permission may be needed for the torch.\n
+        Enable it yourself if so. This service does not collect any data.
+    </string>
+</resources>
