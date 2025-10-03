@@ -2,8 +2,10 @@ package pk.q12.notchsouseless;
 
 import android.accessibilityservice.AccessibilityService;
 import android.annotation.SuppressLint;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
@@ -11,14 +13,12 @@ import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
-import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.util.Log;
-import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.GestureDetector;
 import android.view.Gravity;
@@ -34,7 +34,6 @@ import android.widget.FrameLayout;
 import org.lsposed.hiddenapibypass.HiddenApiBypass;
 
 import java.lang.reflect.Method;
-import java.util.List;
 
 @SuppressLint("AccessibilityPolicy")
 public final class NotchTouchAccessibilityService extends AccessibilityService {
@@ -42,15 +41,33 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
     private View overlayView;
 
-    private DisplayManager displayManager;
     private WindowManager windowManager;
     private GestureDetector gestureDetector;
     private AudioManager audioManager;
     private CameraManager cameraManager;
     private Vibrator vibrator;
 
-    private Display defaultDisplay;
-    private int lastRotation;
+    private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(final Context context, final Intent intent) {
+            final String intentAction = intent.getAction();
+            if (intentAction == null || overlayView == null)
+                return;
+
+            switch (intentAction) {
+                case Intent.ACTION_CONFIGURATION_CHANGED:
+                    updateOverlayBounds();
+                    break;
+                case Intent.ACTION_SCREEN_ON:
+                    if (overlayView.getWindowToken() == null)
+                        windowManager.addView(overlayView, overlayView.getLayoutParams());
+                    break;
+                case Intent.ACTION_SCREEN_OFF:
+                    windowManager.removeViewImmediate(overlayView);
+                    break;
+            }
+        }
+    };
 
     private Method setTorchMode;
     private boolean torchAvailable;
@@ -79,28 +96,9 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
                 cameraManager.setTorchMode(cameraId, newTorchState);
             if (newTorchState)
                 vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK));
-        } catch (final Throwable e) {
+        } catch (final Exception e) {
             Log.e(TAG, "Torch toggle failed: " + e.getMessage(), e);
         }
-    };
-    private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
-        @Override
-        public void onDisplayChanged(final int displayId) {
-            if (displayId != Display.DEFAULT_DISPLAY)
-                return;
-
-            final int rotation = defaultDisplay.getRotation();
-            if (rotation == lastRotation)
-                return;
-
-            if (updateOverlayBounds())
-                lastRotation = rotation;
-        }
-
-        @Override
-        public void onDisplayAdded(final int id) {}
-        @Override
-        public void onDisplayRemoved(final int id) {}
     };
 
     @Override
@@ -116,8 +114,6 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         torchAvailable = initCameraStuff();
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
-        defaultDisplay = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
         setupOverlay();
     }
 
@@ -130,8 +126,8 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
             try {
                 // https://github.com/zacharee/SamsungFlashlight
                 setTorchMode = CameraManager.class.getDeclaredMethod(Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 ? "setTorchMode" : "semSetTorchMode", String.class, boolean.class, int.class);
-            } catch (final NoSuchMethodException e) {
-                /*Log.e(TAG, e.getMessage(), e);
+            } catch (final NoSuchMethodException ignored) {
+                /*Log.e(TAG, ignored.getMessage(), ignored);
                 return false;*/
             }
         }
@@ -175,10 +171,7 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         return super.onUnbind(intent);
     }
 
-    private boolean updateOverlayBounds() {
-        if (overlayView == null)
-            return true;
-
+    private void updateOverlayBounds() {
         try {
             final Rect cutoutBounds = getNotchBounds();
             final int cutoutBoundsWidth = cutoutBounds.width();
@@ -187,7 +180,7 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
             final WindowManager.LayoutParams params = (WindowManager.LayoutParams) overlayView.getLayoutParams();
             if (params.width == cutoutBoundsWidth && params.height == cutoutBoundsHeight &&
                     params.x == cutoutBounds.left && params.y == cutoutBounds.top)
-                return true;
+                return;
 
             params.width = cutoutBoundsWidth;
             params.height = cutoutBoundsHeight;
@@ -195,10 +188,8 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
             params.y = cutoutBounds.top;
 
             windowManager.updateViewLayout(overlayView, params);
-            return true;
-        } catch (final Throwable e) {
+        } catch (final Exception e) {
             Log.e(TAG, "Failed to update overlay bounds: " + e.getMessage(), e);
-            return false;
         }
     }
 
@@ -206,11 +197,8 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         final WindowMetrics metrics = windowManager.getCurrentWindowMetrics();
         final WindowInsets insets = metrics.getWindowInsets();
         final DisplayCutout cutout = insets.getDisplayCutout();
-        if (cutout == null)
-            return null;
 
-        final List<Rect> boundingRects = cutout.getBoundingRects();
-        return !boundingRects.isEmpty() ? boundingRects.get(0) : null;
+        return cutout != null ? cutout.getBoundingRects().get(0) : null;
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -221,7 +209,6 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         final Rect cutoutBounds = getNotchBounds();
         if (cutoutBounds == null)
             return;
-        lastRotation = defaultDisplay.getRotation();
 
         final View touchView = new View(this);
         if (!BuildConfig.DEBUG) {
@@ -268,6 +255,7 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
                     longPressTriggered = false;
                     v.removeCallbacks(longPressRunnable);
                     v.postDelayed(longPressRunnable, torchOn ? delayMillisTorchOff : delayMillisTorchOn);
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Touch at " + ev.getX() + "," + ev.getY());
                     break;
 
                 case MotionEvent.ACTION_UP:
@@ -294,11 +282,6 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
                 }
             };
 
-            debugRectView.setOnTouchListener((v, ev) -> {
-                Log.d(TAG, "Touch at " + ev.getX() + "," + ev.getY());
-                return false;
-            });
-
             ((FrameLayout) overlayView).addView(debugRectView,
                     new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                             FrameLayout.LayoutParams.MATCH_PARENT));
@@ -310,23 +293,27 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
         try {
             windowManager.addView(overlayView, params);
-        } catch (final Throwable e) {
+        } catch (final Exception e) {
             Log.e(TAG, "Failed to add overlay: " + e.getMessage(), e);
             overlayView = null;
             return;
         }
 
-        displayManager.registerDisplayListener(displayListener, null);
+        final IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
+        intentFilter.addAction(Intent.ACTION_SCREEN_ON);
+        intentFilter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(broadcastReceiver, intentFilter);
     }
 
     private void removeOverlay() {
         if (overlayView != null) {
             try {
-                displayManager.unregisterDisplayListener(displayListener);
-            } catch (final Throwable ignored) {}
+                unregisterReceiver(broadcastReceiver);
+            } catch (final Exception ignored) {}
             try {
                 windowManager.removeView(overlayView);
-            } catch (final Throwable ignored) {}
+            } catch (final Exception ignored) {}
             overlayView = null;
         }
     }
