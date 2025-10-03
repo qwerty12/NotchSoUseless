@@ -13,21 +13,21 @@ import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.util.Log;
+import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
-import android.view.WindowInsets;
 import android.view.WindowManager;
-import android.view.WindowMetrics;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 
@@ -47,6 +47,10 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
     private CameraManager cameraManager;
     private Vibrator vibrator;
 
+    private Display defaultDisplay;
+    private int lastRotation;
+    private final Rect[] cutoutBounds = new Rect[4];
+    private final Runnable delayedBoundsUpdate = this::updateOverlayBounds;
     private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(final Context context, final Intent intent) {
@@ -56,7 +60,8 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
             switch (intentAction) {
                 case Intent.ACTION_CONFIGURATION_CHANGED:
-                    updateOverlayBounds();
+                    overlayView.removeCallbacks(delayedBoundsUpdate);
+                    overlayView.postDelayed(delayedBoundsUpdate, 50);
                     break;
                 case Intent.ACTION_SCREEN_ON:
                     if (overlayView.getWindowToken() == null)
@@ -114,6 +119,7 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         torchAvailable = initCameraStuff();
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        defaultDisplay = ((DisplayManager) getSystemService(Context.DISPLAY_SERVICE)).getDisplay(Display.DEFAULT_DISPLAY);
         setupOverlay();
     }
 
@@ -173,7 +179,10 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
     private void updateOverlayBounds() {
         try {
-            final Rect cutoutBounds = getNotchBounds();
+            final int currentRotation = defaultDisplay.getRotation();
+            if (currentRotation == lastRotation)
+                return;
+            final Rect cutoutBounds = getNotchBounds(currentRotation);
             final int cutoutBoundsWidth = cutoutBounds.width();
             final int cutoutBoundsHeight = cutoutBounds.height();
 
@@ -188,17 +197,24 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
             params.y = cutoutBounds.top;
 
             windowManager.updateViewLayout(overlayView, params);
+            lastRotation = currentRotation;
         } catch (final Exception e) {
             Log.e(TAG, "Failed to update overlay bounds: " + e.getMessage(), e);
         }
     }
 
-    private Rect getNotchBounds() {
-        final WindowMetrics metrics = windowManager.getCurrentWindowMetrics();
-        final WindowInsets insets = metrics.getWindowInsets();
-        final DisplayCutout cutout = insets.getDisplayCutout();
+    private Rect getNotchBounds(final int currentRotation) {
+        final Rect cachedBoundingRect = cutoutBounds[currentRotation];
+        if (cachedBoundingRect != null)
+            return cachedBoundingRect;
 
-        return cutout != null ? cutout.getBoundingRects().get(0) : null;
+        final DisplayCutout cutout = windowManager.getMaximumWindowMetrics().getWindowInsets().getDisplayCutout();
+        if (cutout == null)
+            return null;
+
+        final Rect boundingRect = cutout.getBoundingRects().get(0);
+        cutoutBounds[currentRotation] = boundingRect;
+        return boundingRect;
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -206,9 +222,11 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         if (overlayView != null)
             return;
 
-        final Rect cutoutBounds = getNotchBounds();
+        final int currentRotation = defaultDisplay.getRotation();
+        final Rect cutoutBounds = getNotchBounds(currentRotation);
         if (cutoutBounds == null)
             return;
+        lastRotation = currentRotation;
 
         final View touchView = new View(this);
         if (!BuildConfig.DEBUG) {
