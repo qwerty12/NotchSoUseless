@@ -19,6 +19,7 @@ import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
 import android.view.DisplayCutout;
@@ -59,13 +60,13 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
                 return;
 
             switch (intentAction) {
+                case Intent.ACTION_SCREEN_ON:
+                    //if (!overlayView.isAttachedToWindow())
+                    windowManager.addView(overlayView, overlayView.getLayoutParams());
+                    break;
                 case Intent.ACTION_CONFIGURATION_CHANGED:
                     overlayView.removeCallbacks(delayedBoundsUpdate);
                     overlayView.postDelayed(delayedBoundsUpdate, 50);
-                    break;
-                case Intent.ACTION_SCREEN_ON:
-                    if (overlayView.getWindowToken() == null)
-                        windowManager.addView(overlayView, overlayView.getLayoutParams());
                     break;
                 case Intent.ACTION_SCREEN_OFF:
                     windowManager.removeViewImmediate(overlayView);
@@ -95,10 +96,19 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
         try {
             final boolean newTorchState = !torchOn;
-            if (setTorchMode != null)
-                setTorchMode.invoke(cameraManager, cameraId, newTorchState, 5);
-            else
+            if (newTorchState && setTorchMode != null) {
+                int flashlightStrengthLevel;
+                switch (Settings.System.getInt(getContentResolver(), "Flashlight_brightness_level", 1009)) {
+                    case 1001: flashlightStrengthLevel = 1; break;
+                    case 1002: flashlightStrengthLevel = 2; break;
+                    case 1004: flashlightStrengthLevel = 3; break; // Samsung QS def. fallback value
+                    case 1006: flashlightStrengthLevel = 4; break;
+                      default: flashlightStrengthLevel = 5; break; // case 1009:
+                }
+                setTorchMode.invoke(cameraManager, cameraId, true, flashlightStrengthLevel);
+            } else {
                 cameraManager.setTorchMode(cameraId, newTorchState);
+            }
             if (newTorchState)
                 vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK));
         } catch (final Exception e) {
