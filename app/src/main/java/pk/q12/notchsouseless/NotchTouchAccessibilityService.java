@@ -2,6 +2,7 @@ package pk.q12.notchsouseless;
 
 import android.accessibilityservice.AccessibilityService;
 import android.annotation.SuppressLint;
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -26,8 +27,10 @@ import android.view.DisplayCutout;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
@@ -47,6 +50,7 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
     private AudioManager audioManager;
     private CameraManager cameraManager;
     private Vibrator vibrator;
+    private KeyguardManager keyguardManager;
 
     private Display defaultDisplay;
     private int lastRotation;
@@ -74,6 +78,13 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
             }
         }
     };
+
+    public static final Intent ACTION_START_BLOCKING_TOUCHES =
+            new Intent("com.nightlynexus.touchblocker.ACTION_START_BLOCKING_TOUCHES");
+    private static final Intent ACTION_END_BLOCKING_TOUCHES =
+            new Intent("com.nightlynexus.touchblocker.ACTION_END_BLOCKING_TOUCHES");
+    private static final Intent ACTION_TOGGLE_BLOCKING_TOUCHES =
+            new Intent("com.nightlynexus.touchblocker.ACTION_TOGGLE_BLOCKING_TOUCHES");
 
     private Method setTorchMode;
     private boolean torchAvailable;
@@ -174,6 +185,9 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         if (vibrator == null)
             vibrator = ((VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE)).getDefaultVibrator();
 
+        if (keyguardManager == null)
+            keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+
         return true;
     }
 
@@ -271,7 +285,13 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
 
             @Override
             public boolean onDoubleTap(final MotionEvent e) {
-                performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
+                if (!wouldBeAnnoyingToRun()) {
+                    performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
+                    sendBroadcast(ACTION_START_BLOCKING_TOUCHES);
+                    sendBroadcast(ACTION_END_BLOCKING_TOUCHES);
+                } else {
+                    sendBroadcast(ACTION_TOGGLE_BLOCKING_TOUCHES);
+                }
                 return true;
             }
         });
@@ -282,7 +302,8 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
                 case MotionEvent.ACTION_DOWN:
                     longPressTriggered = false;
                     v.removeCallbacks(longPressRunnable);
-                    v.postDelayed(longPressRunnable, torchOn ? delayMillisTorchOff : delayMillisTorchOn);
+                    if (torchOn || !wouldBeAnnoyingToRun())
+                        v.postDelayed(longPressRunnable, torchOn ? delayMillisTorchOff : delayMillisTorchOn);
                     if (BuildConfig.DEBUG) Log.d(TAG, "Touch at " + ev.getX() + "," + ev.getY());
                     break;
 
@@ -346,8 +367,34 @@ public final class NotchTouchAccessibilityService extends AccessibilityService {
         }
     }
 
+    private boolean wouldBeAnnoyingToRun() {
+        final int currentRotation = defaultDisplay.getRotation();
+        if (currentRotation == Surface.ROTATION_0 || currentRotation == Surface.ROTATION_180)
+            return false;
+
+        if (keyguardManager.isDeviceLocked())
+            return false;
+
+        final WindowInsets windowInsets = windowManager.getCurrentWindowMetrics().getWindowInsets();
+        return !windowInsets.isVisible(WindowInsets.Type.statusBars()) || !windowInsets.isVisible(WindowInsets.Type.navigationBars());
+    }
+
     @Override
-    public void onAccessibilityEvent(final AccessibilityEvent event) {}
+    public void onAccessibilityEvent(final AccessibilityEvent event) {
+        /*if (event == null) return;
+
+        final int eventType = event.getEventType();
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            //|| eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            )
+        {
+
+            isFullscreen = event.isFullScreen() || isCurrentlyFullScreenLegacy();
+            Log.d("MyService", "Fullscreen status: " + isFullscreen);
+        }*/
+    }
+
     @Override
     public void onInterrupt() {}
 }

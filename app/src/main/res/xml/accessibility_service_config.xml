@@ -11,3 +11,7 @@
     android:description="@string/accessibility_service_description"
     android:isAccessibilityTool="true"
     tools:ignore="AccessibilityPolicy" />
+
+    <!--android:canRetrieveWindowContent="true"
+    android:accessibilityEventTypes="typeWindowsChanged"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"-->
